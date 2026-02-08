@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+        <a href="/dashboard" class="btn btn-primary">← Back to Dashboard</a>
+        <a href="/employees" class="btn btn-success">👥 Manage Employees ({{ employees|length }})</a>
+    </div>
+    
+    <h1>📄 Send PDF Files to Employees</h1>
+
+    <!-- PDF Upload -->
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 30px 0;">
+        <h3>📤 Step 1: Upload PDF</h3>
+        <form id="pdfForm" enctype="multipart/form-data">
+            <input type="file" id="pdfFile" name="pdf_file" accept=".pdf" required>
+            <button type="submit" class="btn btn-primary" style="width: 200px;">Upload PDF</button>
+        </form>
+        <div id="pdfStatus"></div>
+    </div>
+
+    <!-- Employees -->
+    {% if employees %}
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 30px 0;">
+        <h3>👥 Step 2: Select Employees ({{ employees|length }})</h3>
+        <div id="employeeList" style="max-height: 400px; overflow-y: auto; margin-bottom: 20px;">
+            {% for emp in employees %}
+            <div class="employee-item">
+                <input type="checkbox" class="employee-checkbox" value="{{ emp.id }}" data-name="{{ emp.name }}">
+                <div>
+                    <strong>{{ emp.name }}</strong><br>
+                    <small>{{ emp.email }}</small>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <button id="watermarkBtn" class="btn btn-success" style="width: 100%; padding: 20px; font-size: 18px; margin-bottom: 20px;" disabled>
+            🖌️ Generate Watermarked PDFs
+        </button>
+        
+        <button id="sendBtn" class="btn btn-success" style="width: 100%; padding: 25px; font-size: 20px;" disabled>
+            📧 Send to Selected Employees (sakthidinesh1234@gmail.com)
+        </button>
+        <div id="sendStatus"></div>
+    </div>
+    {% else %}
+    <div class="alert alert-error">No employees. <a href="/employees">Add employees first</a></div>
+    {% endif %}
+</div>
+
+<script>
+let pdfUploaded = false;
+let watermarked = false;
+
+// PDF Upload
+document.getElementById('pdfForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const formData = new FormData();
+    const fileInput = document.getElementById('pdfFile');
+    formData.append('pdf_file', fileInput.files[0]);
+    
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = '⏳ Uploading...';
+    
+    try {
+        const response = await fetch('/api/pdf-upload', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            pdfUploaded = true;
+            document.getElementById('pdfStatus').innerHTML = 
+                `<div class="alert alert-success">✅ ${result.filename} uploaded!</div>`;
+            document.getElementById('watermarkBtn').disabled = false;
+        } else {
+            document.getElementById('pdfStatus').innerHTML = 
+                `<div class="alert alert-error">❌ ${result.error}</div>`;
+        }
+    } catch (error) {
+        document.getElementById('pdfStatus').innerHTML = 
+            `<div class="alert alert-error">❌ Upload failed</div>`;
+    }
+    
+    btn.disabled = false;
+    btn.textContent = 'Upload PDF';
+});
+
+// Watermark Button
+document.getElementById('watermarkBtn').addEventListener('click', async function() {
+    const checkboxes = document.querySelectorAll('.employee-checkbox:checked');
+    if (checkboxes.length === 0) {
+        alert('❌ Select at least one employee');
+        return;
+    }
+    
+    const employeeIds = Array.from(checkboxes).map(cb => cb.value);
+    this.disabled = true;
+    this.textContent = '⏳ Generating watermarks...';
+    
+    try {
+        const response = await fetch('/api/watermark-pdf', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({employee_ids: employeeIds})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            watermarked = true;
+            document.getElementById('sendBtn').disabled = false;
+            alert(`✅ ${result.count} watermarked PDFs created!`);
+        } else {
+            alert(`❌ Error: ${result.error}`);
+        }
+    } catch (error) {
+        alert(`❌ Watermark failed: ${error}`);
+    }
+    
+    this.disabled = false;
+    this.textContent = '🖌️ Generate Watermarked PDFs';
+});
+
+// Send Button
+document.getElementById('sendBtn').addEventListener('click', async function() {
+    const checkboxes = document.querySelectorAll('.employee-checkbox:checked');
+    if (checkboxes.length === 0) {
+        alert('❌ Select at least one employee');
+        return;
+    }
+    
+    const employeeIds = Array.from(checkboxes).map(cb => cb.value);
+    this.disabled = true;
+    this.textContent = '⏳ Sending emails...';
+    
+    try {
+        const response = await fetch('/api/send-pdf-emails', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({employee_ids: employeeIds})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            alert(`✅ ${result.sent}/${result.total} emails sent from sakthidinesh1234@gmail.com!`);
+            document.getElementById('sendStatus').innerHTML = 
+                `<div class="alert alert-success">✅ ${result.sent} emails sent successfully!</div>`;
+        } else {
+            alert(`❌ Send failed: ${result.error}`);
+        }
+    } catch (error) {
+        alert(`❌ Send failed`);
+    }
+    
+    this.disabled = false;
+    this.textContent = '📧 Send to Selected Employees (sakthidinesh1234@gmail.com)';
+});
+</script>
+{% endblock %}

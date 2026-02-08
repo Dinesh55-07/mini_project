@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <h1>👥 Employee Management</h1>
+    <a href="/dashboard" class="btn btn-primary">← Back to Dashboard</a>
+
+    <!-- Add Employee Form -->
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 30px 0;">
+        <h3>Add New Employee</h3>
+        <form method="POST">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <input type="email" name="email" placeholder="employee@gmail.com" required style="width: 100%;">
+                <input type="text" name="name" placeholder="Employee Name" required style="width: 100%;">
+            </div>
+            <select name="department" style="width: 100%; padding: 15px; margin: 20px 0; border-radius: 12px;">
+                <option value="General">General</option>
+                <option value="Engineering">Engineering</option>
+                <option value="Sales">Sales</option>
+                <option value="HR">HR</option>
+                <option value="Marketing">Marketing</option>
+            </select>
+            <button type="submit" class="btn btn-success" style="width: 100%;">➕ Add Employee</button>
+        </form>
+    </div>
+
+    <!-- Employee List -->
+    <h3>Employees ({{ employees|length }})</h3>
+    {% if employees %}
+    <div style="display: grid; gap: 15px;">
+        {% for emp in employees %}
+        <div class="employee-item" style="justify-content: space-between;">
+            <div>
+                <strong>{{ emp.name }}</strong><br>
+                <small style="color: #666;">{{ emp.email }} • {{ emp.department }}</small>
+            </div>
+            <form method="POST" style="display: inline;" onsubmit="return confirm('Delete {{ emp.name }}?')">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="email" value="{{ emp.email }}">
+                <button type="submit" class="btn btn-danger">Delete</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-error">No employees. Add some above!</div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SecureTrace</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    {% if session.logged_in %}
+    <div class="navbar">
+        <div class="container">
+            <div class="nav-links">
+                <div class="logo">🔒 SecureTrace</div>
+                <a href="/logout" class="btn logout-btn">Logout</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

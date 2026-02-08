@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SecureTrace - PDF Distribution</title>
+    <style>
+        body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto; max-width: 900px; margin: 0 auto; padding: 20px; background: #f8f9fa; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin: 20px 0; }
+        .btn { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; margin: 5px; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn:hover { opacity: 0.9; }
+        .employee-item { display: flex; align-items: center; padding: 12px; border: 1px solid #e9ecef; border-radius: 8px; margin: 8px 0; }
+        .employee-checkbox { margin-right: 12px; transform: scale(1.2); }
+        .alert { padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        h1 { color: #1a1a1a; font-size: 2.2em; }
+        h3 { color: #333; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>📄 SecureTrace</h1>
+        <p><strong>Manager:</strong> {{ config.MAIL_USERNAME }}</p>
+        <a href="/employees" class="btn btn-primary">👥 Manage Employees</a>
+    </div>
+
+    {% if error %}
+    <div class="card"><div class="alert alert-error">{{ error }}</div></div>
+    {% endif %}
+    
+    {% if success %}
+    <div class="card"><div class="alert alert-success">{{ success }}</div></div>
+    {% endif %}
+
+    <div class="card">
+        <h3>1️⃣ Upload PDF Document</h3>
+        <form method="POST" enctype="multipart/form-data">
+            <input type="file" name="pdf_file" accept=".pdf" required style="padding: 12px; width: 100%; max-width: 400px; border: 2px dashed #007bff; border-radius: 8px;">
+            <br><br>
+            {% if filename %}<strong>✅ Uploaded:</strong> {{ filename }}{% endif %}
+            <button type="submit" class="btn btn-primary">Upload PDF</button>
+        </form>
+    </div>
+
+    {% if employees %}
+    <div class="card">
+        <h3>2️⃣ Select Employees ({{ employees|length }} total)</h3>
+        <form id="watermarkForm">
+            {% for emp in employees %}
+            <div class="employee-item">
+                <input type="checkbox" class="employee-checkbox" value="{{ emp.id }}" name="employees">
+                <div>
+                    <strong>{{ emp.name }}</strong><br>
+                    <small>{{ emp.email }}</small> • {{ emp.department }}
+                </div>
+            </div>
+            {% endfor %}
+            <button type="submit" id="watermarkBtn" class="btn btn-primary" {% if not filename %}disabled{% endif %}>
+                🖌️ Generate Watermarked PDFs
+            </button>
+        </form>
+
+        <form id="sendForm" style="margin-top: 20px;">
+            <button type="submit" id="sendBtn" class="btn btn-success" disabled style="font-size: 1.1em;">
+                📧 Send to Selected Employees
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
+    <script>
+        let watermarked = false;
+        
+        document.getElementById('watermarkForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const checkboxes = document.querySelectorAll('input[name="employees"]:checked');
+            if (checkboxes.length === 0) return alert('Select at least one employee');
+            
+            const btn = document.getElementById('watermarkBtn');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Watermarking...';
+            
+            const employeeIds = Array.from(checkboxes).map(cb => cb.value);
+            const response = await fetch('/api/watermark', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({employee_ids: employeeIds})
+            });
+            
+            const result = await response.json();
+            if (result.success) {
+                watermarked = true;
+                document.getElementById('sendBtn').disabled = false;
+                alert(`✅ ${Object.keys(result.files).length} watermarked PDFs ready!`);
+            } else {
+                alert('❌ Error: ' + result.error);
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = '🖌️ Generate Watermarked PDFs';
+        };
+        
+        document.getElementById('sendForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const checkboxes = document.querySelectorAll('input[name="employees"]:checked');
+            const employeeIds = Array.from(checkboxes).map(cb => cb.value);
+            
+            const btn = document.getElementById('sendBtn');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Sending Emails...';
+            
+            const response = await fetch('/api/send-emails', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({employee_ids: employeeIds})
+            });
+            
+            const result = await response.json();
+            alert(`✅ ${result.sent_count}/${result.total} emails sent from your Gmail!`);
+            
+            btn.disabled = false;
+            btn.innerHTML = '📧 Send to Selected Employees';
+        };
+    </script>
+</body>
+</html>
