@@ -39,7 +39,6 @@ def init_database():
     conn = sqlite3.connect('securetrace.db')
     cursor = conn.cursor()
     
-    # ✅ FIXED: encryption_key has DEFAULT value
     cursor.execute('''CREATE TABLE IF NOT EXISTS employees (
         email TEXT PRIMARY KEY, 
         name TEXT NOT NULL, 
@@ -202,7 +201,6 @@ def watermark_pdf():
             shutil.copy2(original_path, watermarked_path)
             
             forensic_data = f"EMPLOYEE:{emp_email}|NAME:{emp_name}|SENT:{datetime.now().isoformat()}"
-            # ✅ FIXED: Added encryption_key parameter
             cursor.execute('''INSERT INTO watermark_logs 
                 (employee_email, employee_name, document_name, watermarked_file, encryption_key, forensic_data) 
                 VALUES (?, ?, ?, ?, ?, ?)''',
