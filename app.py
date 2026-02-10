@@ -213,7 +213,7 @@ def watermark_pdf():
                 'name': emp_name
             }
         
-        conn.commit()
+        conn.commit()  # commiting
         conn.close()
         session['watermarked_files'] = watermarked_files
         
