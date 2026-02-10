@@ -49,7 +49,6 @@ def images_to_pdf(img_paths, output_path):
             img = Image.open(img_path)
             img_width, img_height = img.size
             
-            # Scale to fit page
             scale = min(width * 0.9 / img_width, height * 0.9 / img_height)
             img_width *= scale
             img_height *= scale
@@ -70,7 +69,6 @@ def send_watermarked_email(recipient_email, recipient_name, emp_id, pdf_path):
     from email.mime.base import MIMEBase
     from email import encoders
     
-    # Config from app
     from app import app
     config = app.config['MAIL_CONFIG']
     
@@ -93,7 +91,6 @@ SecureTrace Team
         """
         msg.attach(MIMEText(body, 'plain'))
         
-        # Attach PDF
         with open(pdf_path, 'rb') as f:
             part = MIMEBase('application', 'octet-stream')
             part.set_payload(f.read())
@@ -104,7 +101,6 @@ SecureTrace Team
             )
             msg.attach(part)
         
-        # Send
         server = smtplib.SMTP(config['smtp_server'], config['smtp_port'])
         server.starttls()
         server.login(config['smtp_email'], config['smtp_password'])
