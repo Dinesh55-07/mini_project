@@ -16,7 +16,7 @@ def encrypt_watermark(emp_id):
     key = Fernet.generate_key()
     f = Fernet(key)
     data = f"EMP:{emp_id}|{datetime.now().strftime('%Y%m%d%H%M%S')}".encode()
-    return key, f.encrypt(data)[:100]  # First 100 bytes
+    return key, f.encrypt(data)[:100]  
 
 def embed_watermark(img_path, watermark_bytes):
     """Embed watermark in image LSB"""
@@ -30,7 +30,7 @@ def embed_watermark(img_path, watermark_bytes):
         if wm_idx < len(binary_wm):
             r, g, b = pixel
             bit = int(binary_wm[wm_idx])
-            r = (r & 0xFE) | bit  # LSB steganography
+            r = (r & 0xFE) | bit  
             new_pixels.append((r, g, b))
             wm_idx += 1
         else:
