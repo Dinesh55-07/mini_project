@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <a href="/dashboard" class="btn btn-primary">← Dashboard</a>
+    <h1>📄 PDF Watermarking Suite</h1>
+    
+    <div class="dashboard-grid">
+        <a href="/pdf-send" class="option-card pdf-card">
+            <h2>🖌️ Watermark & Send PDFs</h2>
+            <p>Upload → Select employees → Send via Gmail</p>
+        </a>
+        <a href="/pdf-detect" class="option-card detect-card">
+            <h2>🔍 Check PDF Leaks</h2>
+            <p>Forensic watermark detection</p>
+        </a>
+    </div>
+</div>
+{% endblock %}

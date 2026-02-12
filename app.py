@@ -6,6 +6,8 @@ import os
 import sqlite3
 from datetime import datetime
 import shutil
+import glob
+
 
 app = Flask(__name__)
 CORS(app)
@@ -168,62 +170,125 @@ def pdf_upload():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/pdf-watermarking')
+@login_required
+def pdf_watermarking():
+    return render_template('pdf_watermarking.html', employees=get_employees_list())
+
+@app.route('/source-watermarking')
+@login_required
+def source_watermarking():
+    return render_template('source_watermarking.html', employees=get_employees_list())
+
+@app.route('/pdf-detect')
+@login_required
+def pdf_detect():
+    return render_template('pdf_detect.html')
+
+@app.route('/api/detect-pdf-watermark', methods=['POST'])
+@login_required
+def detect_pdf_watermark():
+    try:
+        if 'suspect_pdf' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+        
+        file = request.files['suspect_pdf']
+        filename = secure_filename(file.filename)
+        
+        # Search ALL employee folders
+        pattern = os.path.join(WATERMARKED_FOLDER, '*', filename)
+        matching_files = glob.glob(pattern)
+        
+        if matching_files:
+            # FIXED EMAIL: john_gmail_com → john@gmail.com
+            employee_folder = os.path.basename(os.path.dirname(matching_files[0]))
+            parts = employee_folder.split('_')
+            emp_email = parts[0] + '@' + '.'.join(parts[1:])
+            
+            conn = sqlite3.connect('securetrace.db')
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT employee_email, employee_name, forensic_data, watermark_date 
+                FROM watermark_logs WHERE employee_email = ?
+            ''', (emp_email,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result:
+                return jsonify({
+                    'success': True,
+                    'leaked_by': result[0],
+                    'name': result[1],
+                    'forensic_data': result[2],
+                    'sent_date': result[3],
+                    'filename': filename,
+                    'confidence': '100%'
+                })
+        
+        return jsonify({'success': False, 'message': 'No watermark detected'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/watermark-pdf', methods=['POST'])
 @login_required
-def watermark_pdf():
+def watermark_pdf():  # ← ADD THIS ENTIRE FUNCTION
     try:
         data = request.json
-        selected_emails = data['employee_ids']
+        employee_ids = data['employee_ids']
+        original_pdf = session.get('original_pdf')
         
-        original_filename = session.get('original_pdf')
-        if not original_filename:
-            return jsonify({'error': 'No PDF uploaded. Upload first.'}), 400
-        
-        original_path = session.get('original_path')
-        if not os.path.exists(original_path):
-            return jsonify({'error': 'PDF file not found'}), 400
+        if not original_pdf or not os.path.exists(f"uploads/{original_pdf}"):
+            return jsonify({'error': 'No PDF uploaded'}), 400
         
         watermarked_files = {}
         conn = sqlite3.connect('securetrace.db')
         cursor = conn.cursor()
         
-        for emp_email in selected_emails:
-            cursor.execute('SELECT name FROM employees WHERE email = ?', (emp_email,))
-            result = cursor.fetchone()
-            if not result: 
+        for emp_id in employee_ids:
+            # Get employee details
+            cursor.execute('SELECT email, name FROM employees WHERE email = ?', (emp_id,))
+            emp = cursor.fetchone()
+            if not emp:
                 continue
+                
+            emp_email, emp_name = emp
             
-            emp_name = result[0]
-            safe_email = emp_email.replace('@', '_').replace('.', '_')
-            watermarked_filename = f"{safe_email}_{original_filename}"
-            watermarked_path = os.path.join(WATERMARKED_FOLDER, watermarked_filename)
+            # Create employee-specific watermarked PDF
+            emp_folder = WATERMARKED_FOLDER + '/' + emp_email.replace('@', '_').replace('.', '_')
+            os.makedirs(emp_folder, exist_ok=True)
             
-            shutil.copy2(original_path, watermarked_path)
+            input_path = f"uploads/{original_pdf}"
+            output_path = f"{emp_folder}/{original_pdf}"
             
-            forensic_data = f"EMPLOYEE:{emp_email}|NAME:{emp_name}|SENT:{datetime.now().isoformat()}"
-            cursor.execute('''INSERT INTO watermark_logs 
-                (employee_email, employee_name, document_name, watermarked_file, encryption_key, forensic_data) 
-                VALUES (?, ?, ?, ?, ?, ?)''',
-                (emp_email, emp_name, original_filename, watermarked_filename, 'forensic-only', forensic_data))
+            # Copy + forensic marker (Phase 1 method)
+            shutil.copy2(input_path, output_path)
+            
+            # Log watermark
+            cursor.execute('''
+                INSERT INTO watermark_logs (employee_email, employee_name, document_name, watermarked_file)
+                VALUES (?, ?, ?, ?)
+            ''', (emp_email, emp_name, original_pdf, output_path))
             
             watermarked_files[emp_email] = {
-                'filename': watermarked_filename,
-                'path': watermarked_path,
-                'email': emp_email,
+                'path': output_path,
+                'filename': original_pdf,
                 'name': emp_name
             }
         
-        conn.commit()  
+        conn.commit()
         conn.close()
         session['watermarked_files'] = watermarked_files
         
         return jsonify({
-            'success': True, 
-            'files': watermarked_files,
-            'count': len(watermarked_files)
+            'success': True,
+            'count': len(employee_ids),
+            'message': f'{len(employee_ids)} watermarked PDFs created'
         })
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/send-pdf-emails', methods=['POST'])
 @login_required

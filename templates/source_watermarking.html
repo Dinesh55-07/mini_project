@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; margin-bottom: 30px;">
+        <a href="/dashboard" class="btn btn-primary">← Dashboard</a>
+    </div>
+    
+    <h1>💻 Source Code Watermarking Suite</h1>
+    
+    <div class="dashboard-grid">
+        <a href="/source-send" class="option-card">
+            <h2>🖌️ Watermark Source</h2>
+            <p>3-Layer steganography (.py/.js/.cpp)</p>
+        </a>
+        
+        <a href="/source-detect" class="option-card">
+            <h2>🔍 Check Source Leaks</h2>
+            <p>OCR + Multi-layer forensic extraction</p>
+        </a>
+    </div>
+</div>
+{% endblock %}

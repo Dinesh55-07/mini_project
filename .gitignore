@@ -1,0 +1,39 @@
+# SecureTrace - Ignore generated/untracked files
+# Bytecode cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Project-specific ignores
+instance/
+leaks/
+uploads/
+watermarked_pdfs/
+temp_images.zip
+
+# PDFs (all test/sample files)
+*.pdf
+base.pdf
+base1.pdf
+*.PDF
+
+# Database
+securetrace.db
+*.db
+*.db-journal
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs/temp
+*.log
+logs/
+temp/
+tmp/
+
+# Zip archives
+*.zip

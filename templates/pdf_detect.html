@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <a href="/pdf-watermarking" class="btn btn-primary">← PDF Watermarking</a>
+    <h1>🔍 PDF Leak Detection</h1>
+    
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 20px 0;">
+        <h3>📤 Upload Suspected Leaked PDF</h3>
+        <form id="detectForm" enctype="multipart/form-data">
+            <input type="file" id="suspectPdf" name="suspect_pdf" accept=".pdf" required 
+                   style="width: 100%; padding: 10px; margin-bottom: 20px;">
+            <button type="submit" class="btn btn-danger" style="width: 100%; padding: 15px; font-size: 18px;">
+                🚨 ANALYZE FORENSIC WATERMARK
+            </button>
+        </form>
+        <div id="result"></div>
+    </div>
+</div>
+
+<script>
+document.getElementById('detectForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData();
+    formData.append('suspect_pdf', document.getElementById('suspectPdf').files[0]);
+    
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = '🔍 Scanning...';
+    
+    try {
+        const response = await fetch('/api/detect-pdf-watermark', { method: 'POST', body: formData });
+        const result = await response.json();
+        
+        if (result.success) {
+            document.getElementById('result').innerHTML = `
+                <div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    <h3>✅ LEAK CONFIRMED!</h3>
+                    <strong>Leaked by:</strong> ${result.leaked_by}<br>
+                    <strong>Confidence:</strong> ${result.confidence}
+                </div>
+            `;
+        } else {
+            document.getElementById('result').innerHTML = `
+                <div style="background: #f8d7da; color: #721c24; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    ❌ No watermark detected
+                </div>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('result').innerHTML = '<div style="color: red;">Error analyzing PDF</div>';
+    }
+    
+    btn.disabled = false;
+    btn.textContent = '🚨 ANALYZE FORENSIC WATERMARK';
+});
+</script>
+{% endblock %}

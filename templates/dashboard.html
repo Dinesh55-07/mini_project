@@ -1,21 +1,20 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h1>📊 SecureTrace Dashboard</h1>
-    <p>Welcome, {{ session.username }}! Choose an option:</p>
+    <h1>🔒 SecureTrace Forensic Platform</h1>
     
     <div class="dashboard-grid">
-        <a href="/pdf-send" class="option-card">
-            <h2>📄 Send PDF Files</h2>
-            <p>Watermark & distribute PDFs to employees</p>
+        <a href="/pdf-watermarking" class="option-card">
+            <h2>📄 PDF Watermarking</h2>
+            <p>Watermark + Send + Detect leaks</p>
         </a>
-        <a href="/source-send" class="option-card">
-            <h2>💻 Send Source Code</h2>
-            <p>Secure source code distribution</p>
+        <a href="/source-watermarking" class="option-card">
+            <h2>💻 Source Code</h2>
+            <p>3-Layer steganography (coming soon)</p>
         </a>
-        <a href="/leak-check" class="option-card">
-            <h2>🔍 Check Leaks</h2>
-            <p>Forensic leak detection & tracking</p>
+        <a href="/employees" class="option-card">
+            <h2>👥 Manage Employees</h2>
+            <p>Add/Update/Delete employees</p>
         </a>
     </div>
 </div>
