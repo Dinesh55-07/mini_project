@@ -8,8 +8,6 @@ __pycache__/
 # Project-specific ignores
 instance/
 leaks/
-uploads/
-watermarked_pdfs/
 temp_images.zip
 
 # PDFs (all test/sample files)
@@ -17,11 +15,6 @@ temp_images.zip
 base.pdf
 base1.pdf
 *.PDF
-
-# Database
-securetrace.db
-*.db
-*.db-journal
 
 # IDE/Editor
 .vscode/
