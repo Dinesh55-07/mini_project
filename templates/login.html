@@ -1,23 +1,154 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="login-card card">
-    <h1>🔐 SecureTrace Login</h1>
-    {% if error %}
-    <div class="alert alert-error">{{ error }}</div>
-    {% endif %}
-    <form method="POST">
-        <div class="input-group">
-            <input type="text" name="username" placeholder="Username" required>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SecureTrace - Sign In</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* EMBEDDED LinkedIn Styles - NO EXTERNAL DEPENDENCY */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background: transparent;
+            min-height: 100vh; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            padding: 0 20px; /* full vertical centering */
+        }
+        .login-container {
+            display: flex; 
+            max-width: 1000px; 
+            width: 100%; 
+            height: 70vh;
+            background: rgba(8, 18, 30, 0.82);
+            border-radius: 20px; 
+            box-shadow: 0 25px 60px rgba(0,0,0,0.45);
+            border: 1px solid rgba(130, 220, 255, 0.2);
+            backdrop-filter: blur(18px);
+            overflow: hidden;
+        }
+        .login-left {
+            flex: 1.2; 
+            background: linear-gradient(135deg, #5b6fff 0%, #9b5bff 50%, #101b2e 100%);
+            color: white; 
+            padding: 60px 40px; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 30px;
+        }
+        .logo-section {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+        .logo-section img {
+            max-width: 220px;
+            height: auto;
+            display: block;
+        }
+
+        .tagline { font-size: 1.2rem; font-weight: 500; opacity: 0.95; }
+        .features { display: flex; flex-direction: column; gap: 20px; }
+        .feature-item { display: flex; align-items: center; gap: 15px; }
+        .feature-item span { font-size: 1.6rem; }
+        .feature-item strong { font-size: 1.1rem; display: block; }
+        .login-right { 
+            flex: 1; 
+            padding: 60px 50px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            background: rgba(3, 12, 24, 0.9);
+        }
+        .form-card { 
+            width: 100%; 
+            max-width: 380px; 
+            margin: 0 auto;
+        }
+        .form-card h2 { 
+            font-size: 1.9rem; 
+            color: #0a66c2; 
+            margin-bottom: 30px; 
+            font-weight: 700; 
+            text-align: center;
+        }
+        .input-group { margin-bottom: 25px; }
+        .input-group label { display: block; font-weight: 600; color: #fff; margin-bottom: 8px; }
+        .input-group input { 
+            width: 100%; padding: 16px 20px; border: 2px solid #e1e5e9; 
+            border-radius: 10px; font-size: 1rem; transition: all 0.3s;
+        }
+        .input-group input:focus { 
+            outline: none; border-color: #0a66c2; 
+            box-shadow: 0 0 0 4px rgba(10,102,194,0.1);
+        }
+        .login-btn {
+            width: 100%; padding: 18px; background: linear-gradient(135deg, #0a66c2 0%, #0052cc 100%);
+            color: white; border: none; border-radius: 10px; font-size: 1.1rem; 
+            font-weight: 600; cursor: pointer; transition: all 0.3s;
+        }
+        .login-btn:hover { 
+            transform: translateY(-2px); box-shadow: 0 15px 30px rgba(10,102,194,0.4);
+        }
+        .error-alert {
+            background: #fef3f2; border: 1px solid #fca5a5; color: #dc2626;
+            padding: 15px 20px; border-radius: 10px; margin-bottom: 25px;
+        }
+        .demo-info {
+            text-align: center; margin-top: 25px; padding: 15px; 
+            background: #f8f9fa; border-radius: 10px; font-weight: 500; color: #666;
+        }
+        @media (max-width: 768px) {
+            .login-container { flex-direction: column; height: 95vh; border-radius: 12px; }
+            .login-left, .login-right { padding: 40px 30px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- VIDEO BACKGROUND -->
+    <video autoplay muted loop playsinline preload="auto" class="video-bg">
+        <source src="{{ url_for('static', filename='animation.mp4') }}" type="video/mp4">
+    </video>
+    <script>
+        // Ensure video plays
+        document.addEventListener('DOMContentLoaded', function() {
+            const video = document.querySelector('.video-bg');
+            if (video) {
+                video.play().catch(function(error) {
+                    console.log('Video autoplay failed:', error);
+                });
+            }
+        });
+    </script>
+    
+    <div class="login-container">
+        <div class="login-right">
+            <div class="form-card">
+                <div class="logo-section">
+                    <img src="{{ url_for('static', filename='logo.png') }}" alt="Company Logo">
+                </div>
+                <h2>Welcome to SecureTrace</h2>
+                <form method="POST">
+                    {% if error %}
+                    <div class="error-alert">{{ error }}</div>
+                    {% endif %}
+                    
+                    <div class="input-group">
+                        <label>Username</label>
+                        <input type="text" name="username" placeholder="Enter your username" required autofocus>
+                    </div>
+                    
+                    <div class="input-group">
+                        <label>Password</label>
+                        <input type="password" name="password" placeholder="Enter your password" required>
+                    </div>
+                    
+                    <button type="submit" class="login-btn">Sign In</button>
+                </form>
+            </div>
         </div>
-        <div class="input-group">
-            <input type="password" name="password" placeholder="Password" required>
-        </div>
-        <div class="input-group">
-            <button type="submit" class="btn btn-primary" style="width: 100%;">Login</button>
-        </div>
-    </form>
-    <!--><p style="text-align: center; margin-top: 20px; color: #666;">
-        username : admin / password : securetrace123
-    </p><!-->
-</div>
-{% endblock %}
+    </div>
+</body>
+</html>

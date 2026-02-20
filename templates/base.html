@@ -1,19 +1,42 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SecureTrace</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SecureTrace - {% block title %}Forensic Platform{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-    {% if session.logged_in %}
-    <div class="navbar">
-        <div class="container">
-            <div class="nav-links">
-                <div class="logo">🔒 SecureTrace</div>
-                <a href="/logout" class="btn logout-btn">Logout</a>
-            </div>
-        </div>
+    <!-- VIDEO BACKGROUND -->
+    <video autoplay muted loop playsinline preload="auto" class="video-bg">
+        <source src="{{ url_for('static', filename='animation.mp4') }}" type="video/mp4">
+    </video>
+    <script>
+        // Ensure video plays
+        document.addEventListener('DOMContentLoaded', function() {
+            const video = document.querySelector('.video-bg');
+            if (video) {
+                video.play().catch(function(error) {
+                    console.log('Video autoplay failed:', error);
+                });
+            }
+        });
+    </script>
+    
+    <!-- SHIELD LOCK BACKGROUND -->
+    <div class="shield-bg"></div>
+    <div class="shield-lock">
+        <div class="shield-shape"></div>
+        <div class="lock-icon">🔒</div>
     </div>
+    
+    {% if session.logged_in %}
+    <nav class="navbar">
+        <div class="nav-links">
+            <a href="/dashboard" class="logo">🔍 SecureTrace</a>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+    </nav>
     {% endif %}
     
     <div class="container">
