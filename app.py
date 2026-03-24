@@ -7,6 +7,10 @@ import sqlite3
 from datetime import datetime
 import shutil
 import glob
+import json
+import mimetypes
+
+from source_watermark_engine import watermark_source, extract_watermark, match_employee, detect_language
 
 
 app = Flask(__name__)
@@ -18,8 +22,12 @@ MAIL_PASSWORD = 'kcik stll agvd vvgq'
 
 UPLOAD_FOLDER = 'uploads'
 WATERMARKED_FOLDER = 'watermarked_pdfs'
+SOURCE_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, 'source')
+WATERMARKED_SOURCE_FOLDER = 'watermarked_sources'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WATERMARKED_FOLDER, exist_ok=True)
+os.makedirs(SOURCE_UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(WATERMARKED_SOURCE_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -33,9 +41,14 @@ mail = Mail(app)
 VALID_USER = 'admin'
 VALID_PASS = 'securetrace123'
 ALLOWED_EXTENSIONS = {'pdf'}
+ALLOWED_SOURCE_EXTENSIONS = {'py', 'js', 'ts', 'java', 'cpp', 'cc', 'cxx', 'c', 'h', 'hpp'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def allowed_source_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_SOURCE_EXTENSIONS
 
 def init_database():
     conn = sqlite3.connect('securetrace.db')
@@ -65,6 +78,17 @@ def init_database():
         recipient_name TEXT,
         filename TEXT NOT NULL,
         sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS source_watermark_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        employee_email TEXT NOT NULL,
+        employee_name TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        language TEXT NOT NULL,
+        watermarked_file TEXT NOT NULL,
+        watermark_metadata TEXT,
+        watermark_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     conn.commit()
@@ -180,6 +204,18 @@ def pdf_watermarking():
 @login_required
 def source_watermarking():
     return render_template('source_watermarking.html', employees=get_employees_list())
+
+
+@app.route('/source-send')
+@login_required
+def source_send():
+    return render_template('source_send.html', employees=get_employees_list())
+
+
+@app.route('/source-detect')
+@login_required
+def source_detect():
+    return render_template('source_detect.html')
 
 @app.route('/pdf-detect')
 @login_required
@@ -337,6 +373,228 @@ SecureTrace System'''
             'sent': success_count, 
             'total': len(selected_emails),
             'sender': MAIL_USERNAME
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/source-upload', methods=['POST'])
+@login_required
+def source_upload():
+    try:
+        if 'source_file' not in request.files:
+            return jsonify({'error': 'No file selected'}), 400
+
+        file = request.files['source_file']
+        if file.filename == '' or not allowed_source_file(file.filename):
+            return jsonify({'error': 'Invalid source file type'}), 400
+
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(SOURCE_UPLOAD_FOLDER, filename)
+        file.save(filepath)
+
+        session['original_source'] = filename
+        session['original_source_path'] = filepath
+        session.modified = True
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'language': detect_language(filename),
+            'message': 'Source file uploaded successfully'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/watermark-source', methods=['POST'])
+@login_required
+def watermark_source_api():
+    try:
+        data = request.json or {}
+        employee_ids = data.get('employee_ids', [])
+        original_source = session.get('original_source')
+        original_path = session.get('original_source_path')
+
+        if not original_source or not original_path or not os.path.exists(original_path):
+            return jsonify({'error': 'No source file uploaded'}), 400
+
+        if not employee_ids:
+            return jsonify({'error': 'No employees selected'}), 400
+
+        with open(original_path, 'r', encoding='utf-8', errors='replace') as f:
+            source_code = f.read()
+
+        watermarked_files = {}
+        conn = sqlite3.connect('securetrace.db')
+        cursor = conn.cursor()
+
+        for emp_id in employee_ids:
+            cursor.execute('SELECT email, name FROM employees WHERE email = ?', (emp_id,))
+            emp = cursor.fetchone()
+            if not emp:
+                continue
+
+            emp_email, emp_name = emp
+            wm_code, metadata = watermark_source(
+                source_code=source_code,
+                filename=original_source,
+                employee_id=emp_email,
+                employee_name=emp_name,
+            )
+
+            emp_folder = os.path.join(
+                WATERMARKED_SOURCE_FOLDER,
+                emp_email.replace('@', '_').replace('.', '_')
+            )
+            os.makedirs(emp_folder, exist_ok=True)
+
+            output_path = os.path.join(emp_folder, original_source)
+            with open(output_path, 'w', encoding='utf-8', newline='') as wf:
+                wf.write(wm_code)
+
+            cursor.execute('''
+                INSERT INTO source_watermark_logs
+                (employee_email, employee_name, filename, language, watermarked_file, watermark_metadata)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (
+                emp_email,
+                emp_name,
+                original_source,
+                metadata.get('language', 'unknown'),
+                output_path,
+                json.dumps(metadata)
+            ))
+
+            watermarked_files[emp_email] = {
+                'path': output_path,
+                'filename': original_source,
+                'name': emp_name,
+                'language': metadata.get('language', 'unknown')
+            }
+
+        conn.commit()
+        conn.close()
+
+        session['watermarked_source_files'] = watermarked_files
+        session.modified = True
+
+        return jsonify({
+            'success': True,
+            'count': len(watermarked_files),
+            'message': f'{len(watermarked_files)} watermarked source files created'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/send-source-emails', methods=['POST'])
+@login_required
+def send_source_emails():
+    try:
+        data = request.json or {}
+        selected_emails = data.get('employee_ids', [])
+        watermarked_files = session.get('watermarked_source_files', {})
+
+        success_count = 0
+        conn = sqlite3.connect('securetrace.db')
+        cursor = conn.cursor()
+
+        for emp_email in selected_emails:
+            file_info = watermarked_files.get(emp_email)
+            if not file_info or not os.path.exists(file_info['path']):
+                continue
+
+            msg = Message(
+                subject=f'Secure Source File - {file_info["filename"]}',
+                sender=MAIL_USERNAME,
+                recipients=[emp_email],
+                body=f'''Dear {file_info["name"]},
+
+Your personalized source code file is attached.
+
+This file contains forensic tracking information for leak attribution.
+
+SecureTrace System'''
+            )
+
+            guessed_type, _ = mimetypes.guess_type(file_info['filename'])
+            mimetype = guessed_type or 'text/plain'
+
+            with open(file_info['path'], 'rb') as f:
+                msg.attach(file_info['filename'], mimetype, f.read())
+
+            mail.send(msg)
+            success_count += 1
+
+            cursor.execute(
+                'INSERT INTO email_logs (recipient_email, recipient_name, filename) VALUES (?, ?, ?)',
+                (emp_email, file_info['name'], file_info['filename'])
+            )
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'sent': success_count,
+            'total': len(selected_emails),
+            'sender': MAIL_USERNAME
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/detect-source-watermark', methods=['POST'])
+@login_required
+def detect_source_watermark():
+    try:
+        if 'suspect_source' not in request.files:
+            return jsonify({'error': 'No file uploaded'}), 400
+
+        file = request.files['suspect_source']
+        if file.filename == '' or not allowed_source_file(file.filename):
+            return jsonify({'error': 'Invalid source file type'}), 400
+
+        filename = secure_filename(file.filename)
+        source_text = file.read().decode('utf-8', errors='replace')
+
+        extraction = extract_watermark(source_text, filename)
+        if extraction.get('confidence', 0) == 0:
+            return jsonify({'success': False, 'message': 'No source watermark detected'})
+
+        conn = sqlite3.connect('securetrace.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT email, name FROM employees')
+        employees = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        matched_employee = None
+        for emp in employees:
+            if match_employee(extraction, emp['email']):
+                matched_employee = emp
+                break
+
+        if matched_employee:
+            return jsonify({
+                'success': True,
+                'filename': filename,
+                'leaked_by': matched_employee['email'],
+                'name': matched_employee['name'],
+                'confidence': f"{extraction.get('confidence', 0)}%",
+                'layers': extraction.get('layers', {}),
+                'emp_hex': extraction.get('emp_hex')
+            })
+
+        return jsonify({
+            'success': True,
+            'filename': filename,
+            'leaked_by': 'Unknown employee',
+            'name': 'Not matched in employee database',
+            'confidence': f"{extraction.get('confidence', 0)}%",
+            'layers': extraction.get('layers', {}),
+            'emp_hex': extraction.get('emp_hex')
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500

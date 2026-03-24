@@ -30,3 +30,6 @@ tmp/
 
 # Zip archives
 *.zip
+uploads/
+watermarked_pdfs/
+watermarked_sources/

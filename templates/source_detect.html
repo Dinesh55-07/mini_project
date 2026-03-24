@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+    <a href="/source-watermarking" class="btn btn-primary">← Source Watermarking</a>
+    <h1>🔍 Source Leak Detection</h1>
+
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 20px 0;">
+        <h3>📤 Upload Suspected Leaked Source File</h3>
+        <form id="detectForm" enctype="multipart/form-data">
+            <input
+                type="file"
+                id="suspectSource"
+                name="suspect_source"
+                accept=".py,.js,.ts,.java,.cpp,.cc,.cxx,.c,.h,.hpp"
+                required
+                style="width: 100%; padding: 10px; margin-bottom: 20px;"
+            >
+            <button type="submit" class="btn btn-danger" style="width: 100%; padding: 15px; font-size: 18px;">
+                🚨 ANALYZE SOURCE FORENSICS
+            </button>
+        </form>
+        <div id="result"></div>
+    </div>
+</div>
+
+<script>
+document.getElementById('detectForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const fileInput = document.getElementById('suspectSource');
+    if (!fileInput.files.length) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('suspect_source', fileInput.files[0]);
+
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = '🔍 Scanning...';
+
+    try {
+        const response = await fetch('/api/detect-source-watermark', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            const layers = Object.keys(result.layers || {});
+            document.getElementById('result').innerHTML = `
+                <div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    <h3>✅ LEAK ATTRIBUTED</h3>
+                    <strong>Leaked by:</strong> ${result.leaked_by}<br>
+                    <strong>Name:</strong> ${result.name}<br>
+                    <strong>Confidence:</strong> ${result.confidence}<br>
+                    <strong>Recovered Layers:</strong> ${layers.length ? layers.join(', ') : 'none'}
+                </div>
+            `;
+        } else {
+            document.getElementById('result').innerHTML = `
+                <div style="background: #f8d7da; color: #721c24; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    ❌ ${result.message || 'No watermark detected'}
+                </div>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('result').innerHTML =
+            '<div style="color: red; margin-top: 16px;">Error analyzing source file</div>';
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🚨 ANALYZE SOURCE FORENSICS';
+});
+</script>
+{% endblock %}
