@@ -1,7 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="card">
-    <h1>🔒 SecureTrace Forensic Platform</h1>
+    <h1>
+        <span
+            data-decrypted-text
+            data-text="SecureTrace Forensic Platform"
+            data-animate-on="hover"
+            data-speed="45"
+            data-max-iterations="12"
+            data-characters="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!?"
+        >SecureTrace Forensic Platform</span>
+    </h1>
     
     <div class="dashboard-grid">
         <a href="/pdf-watermarking" class="option-card">
@@ -10,7 +19,7 @@
         </a>
         <a href="/source-watermarking" class="option-card">
             <h2>💻 Source Code</h2>
-            <p>3-Layer steganography (coming soon)</p>
+            <p>3-Layer steganography</p>
         </a>
         <a href="/employees" class="option-card">
             <h2>👥 Manage Employees</h2>

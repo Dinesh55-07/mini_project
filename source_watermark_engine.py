@@ -11,6 +11,7 @@ import hmac
 import os
 import re
 from datetime import datetime
+from difflib import SequenceMatcher
 
 
 _SECRET = "securetrace-source-v1"
@@ -164,6 +165,39 @@ def _decode_comment_variants(lines: list[str], lang: str) -> str:
     return "".join(bits)
 
 
+def _decode_comment_variants_ocr(lines: list[str]) -> str:
+    """
+    OCR fallback: decode only neutral filler tokens used by this engine.
+    Accepts lines like '# note', '// review.', or even 'note.' after OCR cleanup.
+    """
+    def _norm_word(w: str) -> str:
+        w = w.lower()
+        w = w.replace("0", "o").replace("1", "i").replace("3", "e").replace("5", "s")
+        return re.sub(r"[^a-z]", "", w)
+
+    def _is_marker(w: str) -> bool:
+        if not w:
+            return False
+        for target in ("note", "review"):
+            if SequenceMatcher(a=w, b=target).ratio() >= 0.62:
+                return True
+        return False
+
+    bits: list[str] = []
+    text = "\n".join(_normalize_newline(line)[0] for line in lines)
+
+    tokens = re.findall(r"[A-Za-z0-9_]+|[.,;:]", text)
+    for i, tok in enumerate(tokens):
+        marker = _norm_word(tok)
+        if not _is_marker(marker):
+            continue
+
+        punct = tokens[i + 1] if i + 1 < len(tokens) else ""
+        bits.append("1" if punct in (".", ",", ";", ":") else "0")
+
+    return "".join(bits)
+
+
 def watermark_source(source_code: str, filename: str, employee_id: str, employee_name: str) -> tuple[str, dict]:
     """Apply stealth source watermark using whitespace + subtle comment variants."""
     lang = detect_language(filename)
@@ -174,7 +208,6 @@ def watermark_source(source_code: str, filename: str, employee_id: str, employee
     ws_encoded, ws_count = _encode_whitespace(lines, ws_bits)
     cm_encoded, cm_count = _encode_comment_variants(ws_encoded, cm_bits, lang)
 
-    # If there are too few comment lines, add a few neutral micro comments at EOF.
     if cm_count < len(cm_bits):
         prefix = _COMMENT_PREFIX.get(lang, "#")
         fillers: list[str] = []
@@ -198,28 +231,37 @@ def watermark_source(source_code: str, filename: str, employee_id: str, employee
         "comment_bits_embedded": cm_count,
         "ws_signature": ws_bits[:16],
         "comment_signature": cm_bits,
-        # Internal-only hashed key for audit table. No direct employee identity in file content.
         "recipient_hash": hashlib.sha256(employee_id.encode("utf-8")).hexdigest()[:16],
     }
     return watermarked, metadata
 
 
-def extract_watermark(source_code: str, filename: str) -> dict:
+def extract_watermark(source_code: str, filename: str, ocr_mode: bool = False) -> dict:
     """Extract stealth watermark signals from whitespace + subtle comment variants."""
     lang = detect_language(filename)
     lines = source_code.splitlines(keepends=True)
 
     ws_recovered = _decode_whitespace(lines)
-    cm_recovered = _decode_comment_variants(lines, lang)
+    cm_primary = _decode_comment_variants(lines, lang)
+    cm_ocr = _decode_comment_variants_ocr(lines) if ocr_mode else ""
+    cm_recovered = cm_primary if len(cm_primary) >= len(cm_ocr) else cm_ocr
 
     ws_sample = ws_recovered[:_WS_BITS]
     cm_sample = cm_recovered[:_COMMENT_BITS]
 
     confidence = 0
-    if len(ws_sample) >= 16:
-        confidence += 65
-    if len(cm_sample) >= 6:
-        confidence += 35
+    if ocr_mode:
+        if len(cm_sample) >= 3:
+            confidence += 35
+        if len(cm_sample) >= 6:
+            confidence += 25
+        if len(ws_sample) >= 8:
+            confidence += 40
+    else:
+        if len(ws_sample) >= 16:
+            confidence += 65
+        if len(cm_sample) >= 6:
+            confidence += 35
 
     return {
         "filename": filename,
@@ -235,20 +277,73 @@ def extract_watermark(source_code: str, filename: str) -> dict:
                 "sample": cm_sample,
             },
         },
-        # Keep key for compatibility with existing API response fields.
         "emp_hex": None,
     }
 
 
-def match_employee(extraction_result: dict, employee_id: str) -> bool:
-    """Match extracted signals against expected employee fingerprints."""
-    filename = extraction_result.get("filename", "")
+def _bit_match_ratio(expected: str, recovered: str) -> tuple[int, int, float]:
+    recovered_total = len(recovered)
+    total = min(len(expected), recovered_total)
+    if total == 0:
+        return 0, 0, 0.0
+
+    n = len(expected)
+    m = len(recovered)
+    dp = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        ei = expected[i - 1]
+        row = dp[i]
+        prev = dp[i - 1]
+        for j in range(1, m + 1):
+            if ei == recovered[j - 1]:
+                row[j] = prev[j - 1] + 1
+            else:
+                row[j] = row[j - 1] if row[j - 1] >= prev[j] else prev[j]
+
+    matches = min(dp[n][m], total)
+    return matches, total, (matches / total)
+
+
+def score_employee_match(extraction_result: dict, employee_id: str, filename_override: str | None = None) -> dict:
+    """Return match score and layer evidence for an employee candidate."""
+    filename = filename_override or extraction_result.get("filename", "")
     expected_ws, expected_cm = _fingerprints(employee_id, filename)
 
     got_ws = extraction_result.get("layers", {}).get("whitespace", {}).get("sample", "")
     got_cm = extraction_result.get("layers", {}).get("comment", {}).get("sample", "")
+    ws_recovered_total = extraction_result.get("layers", {}).get("whitespace", {}).get("bits_recovered", len(got_ws))
+    cm_recovered_total = extraction_result.get("layers", {}).get("comment", {}).get("bits_recovered", len(got_cm))
 
-    ws_ok = bool(got_ws) and expected_ws.startswith(got_ws)
-    cm_ok = bool(got_cm) and expected_cm.startswith(got_cm)
+    ws_match_len, ws_total, ws_ratio = _bit_match_ratio(expected_ws, got_ws)
+    cm_match_len, cm_total, cm_ratio = _bit_match_ratio(expected_cm, got_cm)
 
+    if ws_total and cm_total:
+        ws_weight, cm_weight = 70, 30
+    elif ws_total:
+        ws_weight, cm_weight = 100, 0
+    elif cm_total:
+        ws_weight, cm_weight = 0, 100
+    else:
+        ws_weight, cm_weight = 0, 0
+
+    score = int(ws_ratio * ws_weight) + int(cm_ratio * cm_weight)
+
+    return {
+        "score": score,
+        "ws_match_len": ws_match_len,
+        "cm_match_len": cm_match_len,
+        "ws_total": ws_total,
+        "cm_total": cm_total,
+        "ws_ratio": round(ws_ratio, 3),
+        "cm_ratio": round(cm_ratio, 3),
+        "ws_recovered_total": ws_recovered_total,
+        "cm_recovered_total": cm_recovered_total,
+    }
+
+
+def match_employee(extraction_result: dict, employee_id: str, filename_override: str | None = None) -> bool:
+    """Match extracted signals against expected employee fingerprints."""
+    score_info = score_employee_match(extraction_result, employee_id, filename_override)
+    ws_ok = score_info["ws_total"] >= 8 and score_info["ws_ratio"] >= 0.75
+    cm_ok = score_info["cm_total"] >= 4 and score_info["cm_ratio"] >= 0.66
     return ws_ok or cm_ok

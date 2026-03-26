@@ -9,8 +9,17 @@ import shutil
 import glob
 import json
 import mimetypes
+import re
+from difflib import SequenceMatcher
 
-from source_watermark_engine import watermark_source, extract_watermark, match_employee, detect_language
+from source_watermark_engine import (
+    watermark_source,
+    extract_watermark,
+    match_employee,
+    score_employee_match,
+    detect_language,
+)
+from photo_source_forensics import analyze_source_photo
 
 
 app = Flask(__name__)
@@ -24,10 +33,12 @@ UPLOAD_FOLDER = 'uploads'
 WATERMARKED_FOLDER = 'watermarked_pdfs'
 SOURCE_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, 'source')
 WATERMARKED_SOURCE_FOLDER = 'watermarked_sources'
+PHOTO_UPLOAD_FOLDER = 'temp_images'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WATERMARKED_FOLDER, exist_ok=True)
 os.makedirs(SOURCE_UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(WATERMARKED_SOURCE_FOLDER, exist_ok=True)
+os.makedirs(PHOTO_UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
@@ -42,6 +53,7 @@ VALID_USER = 'admin'
 VALID_PASS = 'securetrace123'
 ALLOWED_EXTENSIONS = {'pdf'}
 ALLOWED_SOURCE_EXTENSIONS = {'py', 'js', 'ts', 'java', 'cpp', 'cc', 'cxx', 'c', 'h', 'hpp'}
+ALLOWED_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp', 'bmp'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -49,6 +61,43 @@ def allowed_file(filename):
 
 def allowed_source_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_SOURCE_EXTENSIONS
+
+
+def allowed_image_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def _normalize_source_text(text: str) -> str:
+    normalized_lines = []
+    for raw in text.splitlines():
+        line = raw.strip().lower()
+        if not line:
+            continue
+        # Ignore synthetic watermark micro-comment lines for content similarity.
+        if re.match(r'^(#|//)?\s*(note|review)\s*[\.,;:]?\s*$', line):
+            continue
+        line = re.sub(r'\s+', ' ', line)
+        normalized_lines.append(line)
+    return '\n'.join(normalized_lines)
+
+
+def _source_similarity_score(ocr_text: str, candidate_path: str) -> int:
+    if not candidate_path or not os.path.exists(candidate_path):
+        return 0
+
+    try:
+        with open(candidate_path, 'r', encoding='utf-8', errors='replace') as f:
+            candidate_text = f.read()
+    except OSError:
+        return 0
+
+    ocr_norm = _normalize_source_text(ocr_text)
+    cand_norm = _normalize_source_text(candidate_text)
+    if not ocr_norm or not cand_norm:
+        return 0
+
+    ratio = SequenceMatcher(None, ocr_norm, cand_norm).ratio()
+    return int(ratio * 100)
 
 def init_database():
     conn = sqlite3.connect('securetrace.db')
@@ -232,12 +281,10 @@ def detect_pdf_watermark():
         file = request.files['suspect_pdf']
         filename = secure_filename(file.filename)
         
-        # Search ALL employee folders
         pattern = os.path.join(WATERMARKED_FOLDER, '*', filename)
         matching_files = glob.glob(pattern)
         
         if matching_files:
-            # FIXED EMAIL: john_gmail_com → john@gmail.com
             employee_folder = os.path.basename(os.path.dirname(matching_files[0]))
             parts = employee_folder.split('_')
             emp_email = parts[0] + '@' + '.'.join(parts[1:])
@@ -268,7 +315,7 @@ def detect_pdf_watermark():
 
 @app.route('/api/watermark-pdf', methods=['POST'])
 @login_required
-def watermark_pdf():  # ← ADD THIS ENTIRE FUNCTION
+def watermark_pdf(): 
     try:
         data = request.json
         employee_ids = data['employee_ids']
@@ -282,7 +329,6 @@ def watermark_pdf():  # ← ADD THIS ENTIRE FUNCTION
         cursor = conn.cursor()
         
         for emp_id in employee_ids:
-            # Get employee details
             cursor.execute('SELECT email, name FROM employees WHERE email = ?', (emp_id,))
             emp = cursor.fetchone()
             if not emp:
@@ -290,17 +336,14 @@ def watermark_pdf():  # ← ADD THIS ENTIRE FUNCTION
                 
             emp_email, emp_name = emp
             
-            # Create employee-specific watermarked PDF
             emp_folder = WATERMARKED_FOLDER + '/' + emp_email.replace('@', '_').replace('.', '_')
             os.makedirs(emp_folder, exist_ok=True)
             
             input_path = f"uploads/{original_pdf}"
             output_path = f"{emp_folder}/{original_pdf}"
             
-            # Copy + forensic marker (Phase 1 method)
             shutil.copy2(input_path, output_path)
             
-            # Log watermark
             cursor.execute('''
                 INSERT INTO watermark_logs (employee_email, employee_name, document_name, watermarked_file)
                 VALUES (?, ?, ?, ?)
@@ -598,6 +641,180 @@ def detect_source_watermark():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/detect-source-photo', methods=['POST'])
+@login_required
+def detect_source_photo():
+    temp_path = None
+    try:
+        if 'suspect_image' not in request.files:
+            return jsonify({'error': 'No image uploaded'}), 400
+
+        file = request.files['suspect_image']
+        if file.filename == '' or not allowed_image_file(file.filename):
+            return jsonify({'error': 'Invalid image type'}), 400
+
+        source_name_hint = request.form.get('source_name', '').strip()
+        guessed_source_name = source_name_hint or 'suspect.py'
+        safe_name = secure_filename(file.filename)
+        ts = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
+        temp_path = os.path.join(PHOTO_UPLOAD_FOLDER, f'{ts}_{safe_name}')
+        file.save(temp_path)
+
+        analysis = analyze_source_photo(temp_path, guessed_source_name=guessed_source_name)
+        if not analysis.get('success'):
+            if analysis.get('missing'):
+                return jsonify({
+                    'success': False,
+                    'message': 'Photo OCR dependencies missing',
+                    'missing': analysis.get('missing')
+                }), 500
+            return jsonify({'success': False, 'message': analysis.get('error', 'Photo analysis failed')}), 500
+
+        extraction = analysis.get('extraction', {})
+        ws_bits = extraction.get('layers', {}).get('whitespace', {}).get('bits_recovered', 0)
+        cm_bits = extraction.get('layers', {}).get('comment', {}).get('bits_recovered', 0)
+        if extraction.get('confidence', 0) == 0 and ws_bits < 6 and cm_bits < 2:
+            return jsonify({
+                'success': False,
+                'message': 'No watermark signal detected from OCR output',
+                'ocr_chars': analysis.get('ocr_chars', 0),
+                'layers': extraction.get('layers', {}),
+                'ocr_preview': (analysis.get('ocr_text', '')[:400])
+            })
+
+        conn = sqlite3.connect('securetrace.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT s.employee_email, s.employee_name, s.filename, s.watermarked_file
+            FROM source_watermark_logs s
+            INNER JOIN (
+                SELECT employee_email, filename, MAX(id) AS latest_id
+                FROM source_watermark_logs
+                GROUP BY employee_email, filename
+            ) latest ON latest.latest_id = s.id
+        ''')
+        candidates = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        best = None
+        ranked = []
+        for c in candidates:
+            score_info = score_employee_match(
+                extraction_result=extraction,
+                employee_id=c['employee_email'],
+                filename_override=c['filename']
+            )
+            wm_score = score_info['score']
+            text_similarity = _source_similarity_score(analysis.get('ocr_text', ''), c.get('watermarked_file', ''))
+            
+            # CRITICAL FIX FOR PHOTO OCR MODE:
+            # When extracting from noisy photo OCR, TEXT SIMILARITY is more reliable than bits
+            # because OCR corruption makes bit patterns unreliable, but content match is solid
+            # Use 20% watermark + 80% text for photo mode (inverse of direct file mode)
+            combined_score = int((wm_score * 0.20) + (text_similarity * 0.80))
+
+            # MASSIVE BOOST for source filename hint in photo mode
+            # If user provides hint and file matches, this is strong evidence
+            if source_name_hint and c['filename'].lower() == source_name_hint.lower():
+                combined_score = min(100, combined_score + 20)
+            
+            # Secondary boost: if text similarity is perfect (100%), boost that candidate
+            if text_similarity == 100:
+                combined_score = min(100, combined_score + 10)
+
+            enriched = {
+                'email': c['employee_email'],
+                'name': c['employee_name'],
+                'filename': c['filename'],
+                'watermarked_file': c.get('watermarked_file'),
+                'score_info': score_info,
+                'wm_score': wm_score,
+                'text_similarity': text_similarity,
+                'combined_score': combined_score,
+            }
+            ranked.append(enriched)
+            if best is None or combined_score > best['combined_score']:
+                best = enriched
+
+        ranked.sort(key=lambda x: x['combined_score'], reverse=True)
+        # Tie-breaker: if combined scores are equal, prioritize by watermark score
+        # This ensures highest quality watermark match wins when content is identical
+        ranked.sort(key=lambda x: (-x['combined_score'], -x['wm_score']))
+        
+        top_candidates = [
+            {
+                'email': r['email'],
+                'name': r['name'],
+                'filename': r['filename'],
+                'score': r['combined_score'],
+                'wm_score': r['wm_score'],
+                'text_similarity': r['text_similarity'],
+                'score_details': r['score_info']
+            }
+            for r in ranked[:3]
+        ]
+
+        if not best:
+            return jsonify({'success': False, 'message': 'No source watermark candidates found in logs'})
+
+        score_info = best['score_info']
+        score = best['combined_score']
+        has_min_evidence = (
+            score_info.get('ws_total', 0) >= 6
+            or score_info.get('cm_total', 0) >= 3
+            or score_info.get('cm_match_len', 0) >= 3
+        )
+        strong_comment_match = (
+            score_info.get('cm_match_len', 0) >= 3 and score_info.get('cm_ratio', 0) >= 0.66
+        )
+        second_score = ranked[1]['combined_score'] if len(ranked) > 1 else 0
+        margin = score - second_score
+        if ((score < 35 and not strong_comment_match) or not has_min_evidence) and margin < 6:
+            return jsonify({
+                'success': False,
+                'message': 'Attribution confidence too low from photo OCR',
+                'best_candidate': {
+                    'email': best['email'],
+                    'name': best['name'],
+                    'filename': best['filename'],
+                    'score': score,
+                    'wm_score': best['wm_score'],
+                    'text_similarity': best['text_similarity'],
+                    'score_details': score_info
+                },
+                'ocr_chars': analysis.get('ocr_chars', 0),
+                'layers': extraction.get('layers', {}),
+                'ocr_preview': (analysis.get('ocr_text', '')[:400]),
+                'top_candidates': top_candidates
+            })
+
+        return jsonify({
+            'success': True,
+            'mode': 'photo_ocr',
+            'leaked_by': best['email'],
+            'name': best['name'],
+            'matched_source': best['filename'],
+            'confidence': f"{score}%",
+            'decision_margin': margin,
+            'wm_score': best['wm_score'],
+            'text_similarity': best['text_similarity'],
+            'score_details': best['score_info'],
+            'top_candidates': top_candidates,
+            'layers': extraction.get('layers', {}),
+            'ocr_chars': analysis.get('ocr_chars', 0),
+            'ocr_preview': (analysis.get('ocr_text', '')[:400])
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 if __name__ == '__main__':

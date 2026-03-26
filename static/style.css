@@ -260,6 +260,16 @@ input:focus, select:focus {
     text-decoration: none;
 }
 
+.decrypted-text {
+    display: inline-block;
+    white-space: pre-wrap;
+}
+
+.dt-encrypted {
+    opacity: 0.55;
+    filter: saturate(0.7);
+}
+
 .option-card::before {
     content: '';
     position: absolute;

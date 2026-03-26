@@ -21,6 +21,33 @@
         </form>
         <div id="result"></div>
     </div>
+
+    <div style="background: #f8f9fa; padding: 30px; border-radius: 15px; margin: 20px 0;">
+        <h3>📸 Upload Photo/Screenshot of Source Code</h3>
+        <form id="photoDetectForm" enctype="multipart/form-data">
+            <input
+                type="file"
+                id="suspectImage"
+                name="suspect_image"
+                accept=".png,.jpg,.jpeg,.webp,.bmp"
+                required
+                style="width: 100%; padding: 10px; margin-bottom: 12px;"
+            >
+
+            <input
+                type="text"
+                id="sourceName"
+                name="source_name"
+                placeholder="Optional source filename hint (e.g. app.py)"
+                style="width: 100%; padding: 10px; margin-bottom: 20px;"
+            >
+
+            <button type="submit" class="btn btn-danger" style="width: 100%; padding: 15px; font-size: 18px;">
+                📸 ANALYZE PHOTO FORENSICS
+            </button>
+        </form>
+        <div id="photoResult"></div>
+    </div>
 </div>
 
 <script>
@@ -71,6 +98,65 @@ document.getElementById('detectForm').addEventListener('submit', async (e) => {
 
     btn.disabled = false;
     btn.textContent = '🚨 ANALYZE SOURCE FORENSICS';
+});
+
+document.getElementById('photoDetectForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const imageInput = document.getElementById('suspectImage');
+    if (!imageInput.files.length) {
+        return;
+    }
+
+    const sourceName = document.getElementById('sourceName').value.trim();
+    const formData = new FormData();
+    formData.append('suspect_image', imageInput.files[0]);
+    if (sourceName) {
+        formData.append('source_name', sourceName);
+    }
+
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    btn.textContent = '📸 OCR Scanning...';
+
+    try {
+        const response = await fetch('/api/detect-source-photo', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            document.getElementById('photoResult').innerHTML = `
+                <div style="background: #d4edda; color: #155724; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    <h3>✅ PHOTO ATTRIBUTED</h3>
+                    <strong>Leaked by:</strong> ${result.leaked_by}<br>
+                    <strong>Name:</strong> ${result.name}<br>
+                    <strong>Matched Source:</strong> ${result.matched_source}<br>
+                    <strong>Confidence:</strong> ${result.confidence}<br>
+                    <strong>OCR Characters:</strong> ${result.ocr_chars}
+                </div>
+            `;
+        } else {
+            const missing = (result.missing || []).join(', ');
+            const best = result.best_candidate;
+            const bestHtml = best ?
+                `<br><strong>Best Candidate:</strong> ${best.email} (${best.score}%)` : '';
+            document.getElementById('photoResult').innerHTML = `
+                <div style="background: #f8d7da; color: #721c24; padding: 20px; border-radius: 10px; margin-top: 20px;">
+                    ❌ ${result.message || 'Photo watermark detection failed'}
+                    ${bestHtml}
+                    ${missing ? `<br><strong>Missing:</strong> ${missing}` : ''}
+                </div>
+            `;
+        }
+    } catch (error) {
+        document.getElementById('photoResult').innerHTML =
+            '<div style="color: red; margin-top: 16px;">Error analyzing photo</div>';
+    }
+
+    btn.disabled = false;
+    btn.textContent = '📸 ANALYZE PHOTO FORENSICS';
 });
 </script>
 {% endblock %}
