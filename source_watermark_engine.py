@@ -347,3 +347,58 @@ def match_employee(extraction_result: dict, employee_id: str, filename_override:
     ws_ok = score_info["ws_total"] >= 8 and score_info["ws_ratio"] >= 0.75
     cm_ok = score_info["cm_total"] >= 4 and score_info["cm_ratio"] >= 0.66
     return ws_ok or cm_ok
+
+
+def extract_watermark_signature(source_code: str) -> list[str]:
+    """Extract watermark marker sequence (# note, # review, etc.) from source code.
+    
+    Returns list of marker types in order: ['note', 'review', 'note', ...] 
+    Used for cryptographic signature matching instead of text similarity.
+    """
+    lines = source_code.splitlines(keepends=False)
+    markers = []
+    
+    for line in lines:
+        stripped = line.strip()
+        # Match Python comment markers
+        if stripped.startswith('# note'):
+            markers.append('note')
+        elif stripped.startswith('# review'):
+            markers.append('review')
+        # Match JavaScript/Java comment markers
+        elif stripped.startswith('// note'):
+            markers.append('note')
+        elif stripped.startswith('// review'):
+            markers.append('review')
+    
+    return markers
+
+
+def compare_watermark_signatures(sig1: list[str], sig2: list[str]) -> float:
+    """Compare two watermark signature sequences.
+    
+    Returns confidence score 0-100. Score >=70 = strong match, <40 = no match.
+    Uses longest common subsequence to handle OCR noise or minor corruption.
+    """
+    if not sig1 or not sig2:
+        return 0.0
+    
+    # Longest common subsequence
+    m, n = len(sig1), len(sig2)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if sig1[i-1] == sig2[j-1]:
+                dp[i][j] = dp[i-1][j-1] + 1
+            else:
+                dp[i][j] = max(dp[i-1][j], dp[i][j-1])
+    
+    lcs_length = dp[m][n]
+    max_len = max(m, n)
+    
+    if max_len == 0:
+        return 0.0
+    
+    confidence = (lcs_length / max_len) * 100.0
+    return confidence

@@ -4,6 +4,7 @@ from werkzeug.utils import secure_filename
 from flask_mail import Mail, Message
 import os
 import sqlite3
+import hashlib
 from datetime import datetime
 import shutil
 import glob
@@ -18,8 +19,11 @@ from source_watermark_engine import (
     match_employee,
     score_employee_match,
     detect_language,
+    extract_watermark_signature,
+    compare_watermark_signatures,
 )
 from photo_source_forensics import analyze_source_photo
+from pdf_steganography import watermark_pdf as steg_watermark_pdf, detect_watermark_in_pdf, match_watermark_to_employee
 
 
 app = Flask(__name__)
@@ -27,7 +31,7 @@ CORS(app)
 app.secret_key = 'securetrace-v2-2026-super-secret-key'
 
 MAIL_USERNAME = 'sakthidinesh9751@gmail.com'  
-MAIL_PASSWORD = 'kcik stll agvd vvgq'
+MAIL_PASSWORD = 'hiap xadb txmf auel'
 
 UPLOAD_FOLDER = 'uploads'
 WATERMARKED_FOLDER = 'watermarked_pdfs'
@@ -154,6 +158,15 @@ def get_employees_list():
     conn.close()
     return employees
 
+
+def _file_sha256(file_path):
+    """Return SHA256 hex digest for a file."""
+    hasher = hashlib.sha256()
+    with open(file_path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
 def login_required(f):
     def wrap(*args, **kwargs):
         if 'logged_in' not in session:
@@ -274,6 +287,7 @@ def pdf_detect():
 @app.route('/api/detect-pdf-watermark', methods=['POST'])
 @login_required
 def detect_pdf_watermark():
+    temp_path = None
     try:
         if 'suspect_pdf' not in request.files:
             return jsonify({'error': 'No file uploaded'}), 400
@@ -281,37 +295,119 @@ def detect_pdf_watermark():
         file = request.files['suspect_pdf']
         filename = secure_filename(file.filename)
         
-        pattern = os.path.join(WATERMARKED_FOLDER, '*', filename)
-        matching_files = glob.glob(pattern)
-        
-        if matching_files:
-            employee_folder = os.path.basename(os.path.dirname(matching_files[0]))
-            parts = employee_folder.split('_')
-            emp_email = parts[0] + '@' + '.'.join(parts[1:])
-            
-            conn = sqlite3.connect('securetrace.db')
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT employee_email, employee_name, forensic_data, watermark_date 
-                FROM watermark_logs WHERE employee_email = ?
-            ''', (emp_email,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            if result:
+        # Save uploaded file temporarily
+        temp_path = os.path.join(PHOTO_UPLOAD_FOLDER, f"temp_{filename}")
+        file.save(temp_path)
+
+        # Step 0: Fast exact-file attribution using SHA256 fingerprint.
+        suspect_hash = _file_sha256(temp_path)
+        conn = sqlite3.connect('securetrace.db')
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT employee_email, employee_name, document_name, forensic_data
+            FROM watermark_logs
+            ORDER BY rowid DESC
+        ''')
+        watermark_rows = [dict(row) for row in cursor.fetchall()]
+
+        for row in watermark_rows:
+            forensic_data = row.get('forensic_data')
+            if not forensic_data:
+                continue
+            try:
+                metadata = json.loads(forensic_data)
+            except (TypeError, json.JSONDecodeError):
+                continue
+
+            if metadata.get('file_sha256') == suspect_hash:
+                conn.close()
                 return jsonify({
                     'success': True,
-                    'leaked_by': result[0],
-                    'name': result[1],
-                    'forensic_data': result[2],
-                    'sent_date': result[3],
-                    'filename': filename,
-                    'confidence': '100%'
+                    'leaked_by': row['employee_email'],
+                    'name': row['employee_name'],
+                    'matched_pdf': row['document_name'],
+                    'confidence': '100%',
+                    'detection_method': 'SHA256_File_Fingerprint',
+                    'forensic_data': {
+                        'suspect_hash': suspect_hash,
+                        'matched_hash': metadata.get('file_sha256')
+                    }
                 })
         
-        return jsonify({'success': False, 'message': 'No watermark detected'})
+        # Step 1: Extract watermark from PDF using LSB steganography
+        success, extraction = detect_watermark_in_pdf(temp_path)
+        
+        if not success or not extraction:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'message': 'No encrypted watermark detected in PDF. If this PDF was watermarked before today\'s engine update, regenerate the watermark and test again.'
+            })
+        
+        encrypted_watermark = extraction.get('encrypted_watermark')
+        
+        # Step 2: Try to match against all known employees
+        cursor.execute('SELECT email, name FROM employees')
+        employees = [dict(row) for row in cursor.fetchall()]
+        
+        cursor.execute('SELECT DISTINCT document_name FROM watermark_logs')
+        known_pdfs = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        
+        # Prioritize likely filename candidates first to reduce decrypt attempts.
+        uploaded_name = filename
+        normalized_name = re.sub(r'\s*\(\d+\)(?=\.[^.]+$)', '', uploaded_name)
+        candidate_pdfs = []
+        for preferred in [uploaded_name, normalized_name]:
+            if preferred in known_pdfs and preferred not in candidate_pdfs:
+                candidate_pdfs.append(preferred)
+        for known_name in known_pdfs:
+            if known_name not in candidate_pdfs:
+                candidate_pdfs.append(known_name)
+
+        for emp in employees:
+            for pdf_name in candidate_pdfs:
+                match_success, decrypted = match_watermark_to_employee(
+                    encrypted_watermark,
+                    emp['email'],
+                    pdf_name
+                )
+                
+                if match_success and decrypted:
+                    best_match = {
+                        'employee_email': emp['email'],
+                        'employee_name': emp['name'],
+                        'filename': pdf_name,
+                        'decrypted_data': decrypted,
+                        'confidence': '100%'
+                    }
+                    # Early exit on first valid decryption match.
+                    return jsonify({
+                        'success': True,
+                        'leaked_by': best_match['employee_email'],
+                        'name': best_match['employee_name'],
+                        'matched_pdf': best_match['filename'],
+                        'decrypted_watermark': best_match['decrypted_data'],
+                        'confidence': best_match['confidence'],
+                        'detection_method': 'LSB_Steganography_Decryption',
+                        'all_matches': [best_match]
+                    })
+        
+        return jsonify({
+            'success': False,
+            'message': 'Watermark detected but could not match to any employee',
+            'extraction_info': extraction
+        })
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 @app.route('/api/watermark-pdf', methods=['POST'])
 @login_required
@@ -328,6 +424,8 @@ def watermark_pdf():
         conn = sqlite3.connect('securetrace.db')
         cursor = conn.cursor()
         
+        input_path = f"uploads/{original_pdf}"
+        
         for emp_id in employee_ids:
             cursor.execute('SELECT email, name FROM employees WHERE email = ?', (emp_id,))
             emp = cursor.fetchone()
@@ -339,20 +437,35 @@ def watermark_pdf():
             emp_folder = WATERMARKED_FOLDER + '/' + emp_email.replace('@', '_').replace('.', '_')
             os.makedirs(emp_folder, exist_ok=True)
             
-            input_path = f"uploads/{original_pdf}"
             output_path = f"{emp_folder}/{original_pdf}"
             
-            shutil.copy2(input_path, output_path)
+            # Use LSB steganography to watermark PDF
+            success, message, metadata = steg_watermark_pdf(
+                input_path,
+                emp_email,
+                emp_name,
+                output_path
+            )
             
+            if not success:
+                return jsonify({'error': f'Watermark failed for {emp_name}: {message}'}), 500
+
+            # Add deterministic file fingerprint for exact-file attribution fallback.
+            if metadata is None:
+                metadata = {}
+            metadata['file_sha256'] = _file_sha256(output_path)
+            
+            # Store encrypted watermark info in database
             cursor.execute('''
-                INSERT INTO watermark_logs (employee_email, employee_name, document_name, watermarked_file)
-                VALUES (?, ?, ?, ?)
-            ''', (emp_email, emp_name, original_pdf, output_path))
+                INSERT INTO watermark_logs (employee_email, employee_name, document_name, watermarked_file, forensic_data)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (emp_email, emp_name, original_pdf, output_path, json.dumps(metadata)))
             
             watermarked_files[emp_email] = {
                 'path': output_path,
                 'filename': original_pdf,
-                'name': emp_name
+                'name': emp_name,
+                'watermark_method': 'LSB_Steganography'
             }
         
         conn.commit()
@@ -362,7 +475,8 @@ def watermark_pdf():
         return jsonify({
             'success': True,
             'count': len(employee_ids),
-            'message': f'{len(employee_ids)} watermarked PDFs created'
+            'message': f'{len(employee_ids)} PDFs watermarked using LSB steganography with encryption',
+            'method': 'LSB_Steganography'
         })
         
     except Exception as e:
@@ -699,32 +813,52 @@ def detect_source_photo():
         candidates = [dict(row) for row in cursor.fetchall()]
         conn.close()
 
+        # STEP 1: Extract watermark signature from OCR'd text
+        ocr_text = analysis.get('ocr_text', '')
+        ocr_signature = extract_watermark_signature(ocr_text)
+        
         best = None
         ranked = []
+        
         for c in candidates:
+            # STEP 2: Extract signature from candidate's watermarked file
+            try:
+                with open(c.get('watermarked_file', ''), 'r', encoding='utf-8', errors='replace') as f:
+                    candidate_file_text = f.read()
+                candidate_signature = extract_watermark_signature(candidate_file_text)
+            except (OSError, TypeError):
+                candidate_signature = []
+            
+            # STEP 3: Compare signatures cryptographically (PRIMARY MATCHING)
+            signature_confidence = compare_watermark_signatures(ocr_signature, candidate_signature)
+            
+            # STEP 4: Get traditional scoring metrics as fallback
             score_info = score_employee_match(
                 extraction_result=extraction,
                 employee_id=c['employee_email'],
                 filename_override=c['filename']
             )
             wm_score = score_info['score']
-            text_similarity = _source_similarity_score(analysis.get('ocr_text', ''), c.get('watermarked_file', ''))
+            text_similarity = _source_similarity_score(ocr_text, c.get('watermarked_file', ''))
             
-            # CRITICAL FIX FOR PHOTO OCR MODE:
-            # When extracting from noisy photo OCR, TEXT SIMILARITY is more reliable than bits
-            # because OCR corruption makes bit patterns unreliable, but content match is solid
-            # Use 20% watermark + 80% text for photo mode (inverse of direct file mode)
-            combined_score = int((wm_score * 0.20) + (text_similarity * 0.80))
+            # SIGNATURE-FIRST RANKING:
+            # If signature confidence is high (>=70), use signature as primary metric
+            # Otherwise fall back to traditional weighted scoring
+            if signature_confidence >= 70:
+                # Strong signature match: prioritize this candidate
+                combined_score = int(signature_confidence)
+                # Add small boost from text for fine-ranking within high-confidence matches
+                combined_score = min(100, combined_score + (text_similarity * 0.1))
+                detection_method = 'Watermark_Signature_Match'
+            else:
+                # Weak or no signature match: use traditional 50/50 weighted score
+                combined_score = int((wm_score * 0.50) + (text_similarity * 0.50))
+                detection_method = 'Traditional_Scoring'
 
-            # MASSIVE BOOST for source filename hint in photo mode
-            # If user provides hint and file matches, this is strong evidence
-            if source_name_hint and c['filename'].lower() == source_name_hint.lower():
+            # Boost for filename hint (only if signature match is weak)
+            if signature_confidence < 70 and source_name_hint and c['filename'].lower() == source_name_hint.lower():
                 combined_score = min(100, combined_score + 20)
             
-            # Secondary boost: if text similarity is perfect (100%), boost that candidate
-            if text_similarity == 100:
-                combined_score = min(100, combined_score + 10)
-
             enriched = {
                 'email': c['employee_email'],
                 'name': c['employee_name'],
@@ -733,16 +867,16 @@ def detect_source_photo():
                 'score_info': score_info,
                 'wm_score': wm_score,
                 'text_similarity': text_similarity,
+                'signature_confidence': signature_confidence,
                 'combined_score': combined_score,
+                'detection_method': detection_method,
             }
             ranked.append(enriched)
             if best is None or combined_score > best['combined_score']:
                 best = enriched
 
-        ranked.sort(key=lambda x: x['combined_score'], reverse=True)
-        # Tie-breaker: if combined scores are equal, prioritize by watermark score
-        # This ensures highest quality watermark match wins when content is identical
-        ranked.sort(key=lambda x: (-x['combined_score'], -x['wm_score']))
+        ranked.sort(key=lambda x: (-x['combined_score'], -x['signature_confidence'], -x['wm_score']))
+
         
         top_candidates = [
             {
@@ -752,6 +886,8 @@ def detect_source_photo():
                 'score': r['combined_score'],
                 'wm_score': r['wm_score'],
                 'text_similarity': r['text_similarity'],
+                'signature_confidence': r['signature_confidence'],
+                'detection_method': r['detection_method'],
                 'score_details': r['score_info']
             }
             for r in ranked[:3]
