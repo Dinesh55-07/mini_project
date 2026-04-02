@@ -42,6 +42,11 @@
             🖌️ Generate Watermarked Source Files
         </button>
 
+        <div style="margin-bottom: 20px;">
+            <label for="customMessage" style="font-weight: 600; display: block; margin-bottom: 8px;">✉️ Optional Message to Employees</label>
+            <textarea id="customMessage" rows="4" style="width: 100%; padding: 12px; border: 1px solid #d0d7de; border-radius: 10px;" placeholder="Type your custom message here..."></textarea>
+        </div>
+
         <button id="sendBtn" class="btn btn-success" style="width: 100%; padding: 25px; font-size: 20px;" disabled>
             📧 Send to Selected Employees
         </button>
@@ -133,6 +138,7 @@ document.getElementById('sendBtn').addEventListener('click', async function() {
     }
 
     const employeeIds = Array.from(checkboxes).map(cb => cb.value);
+    const customMessage = document.getElementById('customMessage').value.trim();
     this.disabled = true;
     this.textContent = '⏳ Sending emails...';
 
@@ -140,7 +146,7 @@ document.getElementById('sendBtn').addEventListener('click', async function() {
         const response = await fetch('/api/send-source-emails', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({employee_ids: employeeIds})
+            body: JSON.stringify({employee_ids: employeeIds, custom_message: customMessage})
         });
         const result = await response.json();
 

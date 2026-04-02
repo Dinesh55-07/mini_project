@@ -487,8 +487,9 @@ def watermark_pdf():
 @login_required
 def send_pdf_emails():
     try:
-        data = request.json
-        selected_emails = data['employee_ids']
+        data = request.json or {}
+        selected_emails = data.get('employee_ids', [])
+        custom_message = (data.get('custom_message') or '').strip()
         watermarked_files = session.get('watermarked_files', {})
         
         success_count = 0
@@ -506,11 +507,7 @@ def send_pdf_emails():
                 recipients=[emp_email],
                 body=f'''Dear {file_info["name"]},
 
-Your personalized secure document is attached.
-
-This document contains forensic tracking information.
-
-SecureTrace System'''
+{custom_message if custom_message else 'Your personalized secure document is attached.'}'''
             )
             
             with open(file_info['path'], 'rb') as f:
@@ -651,6 +648,7 @@ def send_source_emails():
     try:
         data = request.json or {}
         selected_emails = data.get('employee_ids', [])
+        custom_message = (data.get('custom_message') or '').strip()
         watermarked_files = session.get('watermarked_source_files', {})
 
         success_count = 0
@@ -668,11 +666,7 @@ def send_source_emails():
                 recipients=[emp_email],
                 body=f'''Dear {file_info["name"]},
 
-Your personalized source code file is attached.
-
-This file contains forensic tracking information for leak attribution.
-
-SecureTrace System'''
+{custom_message if custom_message else 'Your personalized source code file is attached.'}'''
             )
 
             guessed_type, _ = mimetypes.guess_type(file_info['filename'])
